@@ -1,0 +1,32 @@
+name: Build Caddy
+
+on:
+  push:
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+  schedule:
+    - cron: '22 11 * * *'
+
+jobs:
+  build:
+    name:    Build Caddy
+
+    strategy:
+      matrix:
+        module:
+          - github.com/ss098/certmagic-s3
+          - github.com/silinternational/certmagic-storage-dynamodb/v3
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Build Docker image
+        run:  docker build -t local --build-arg="MODULE=${{ matrix.module }}" < docker/build-caddy.sh
+
+      - name: Copy Caddy executable from Docker image
+        run:  ls -al .
