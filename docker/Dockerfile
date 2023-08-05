@@ -6,4 +6,4 @@ ARG MODULE
 COPY build-caddy.sh /build-caddy.sh
 
 # Code file to execute when the docker container starts up
-ENTRYPOINT ["/build-caddy.sh", "${MODULE}"]
+CMD ["/build-caddy.sh", "${MODULE}"]
