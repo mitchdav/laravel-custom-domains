@@ -81,6 +81,8 @@ jobs:
               
               mv caddy/Caddyfile-with-s3 ./release/Caddyfile-with-s3
               mv artifacts/caddy-with-s3/caddy ./release/caddy-with-s3
+              
+              mv caddy/caddy.service ./release/caddy.service
 
       - name: Set release tag environment variable
         run:  |
@@ -100,3 +102,5 @@ jobs:
                     
                     ./release/Caddyfile-with-s3
                     ./release/caddy-with-s3
+                    
+                    ./release/caddy.service
