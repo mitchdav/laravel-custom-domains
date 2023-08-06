@@ -65,11 +65,10 @@ jobs:
       - name: Download all workflow run artifacts
         uses: actions/download-artifact@v3
 
-      - name: Upload executable to release
-        uses: svenstaro/upload-release-action@v2
+      - name: Create release
+        uses: softprops/action-gh-release@v1
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file:       ./caddy*
-          file_glob:  true
-          asset_name: ${{ matrix.asset_name }}
-          tag:        ${{ github.ref }}
+          files: |
+                 caddy
+                 caddy-with-dynamodb
+                 caddy-with-s3
