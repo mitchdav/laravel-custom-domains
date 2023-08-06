@@ -1,4 +1,4 @@
-FROM --platform=linux/amd64 amazonlinux:latest
+FROM amazonlinux:latest
 
 RUN mkdir build
 
