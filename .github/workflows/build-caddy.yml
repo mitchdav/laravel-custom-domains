@@ -12,12 +12,12 @@ on:
 jobs:
   build:
     name:    Build Caddy
-
-    strategy:
-      matrix:
-        module:
-          - github.com/ss098/certmagic-s3
-          - github.com/silinternational/certmagic-storage-dynamodb/v3
+#
+#    strategy:
+#      matrix:
+#        module:
+#          - github.com/ss098/certmagic-s3
+#          - github.com/silinternational/certmagic-storage-dynamodb/v3
 
     runs-on: ubuntu-latest
 
@@ -26,7 +26,12 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Build Docker image
-        run:  docker build - --build-arg="MODULE=${{ matrix.module }}" < docker/build-caddy.sh
+#        run:  docker build - --build-arg="MODULE=${{ matrix.module }}" < docker/build-caddy.sh
+        run:  docker build -f docker/Dockerfile -t latest .
 
-      - name: Copy Caddy executable from Docker image
-        run:  ls -al .
+      - name: Run Docker container
+#        run:  docker build - --build-arg="MODULE=${{ matrix.module }}" < docker/build-caddy.sh
+        run:  docker run latest "${{ matrix.module }}"
+
+#      - name: Copy Caddy executable from Docker image
+#        run:  ls -al .

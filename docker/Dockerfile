@@ -1,9 +1,10 @@
-FROM amazonlinux:latest
+FROM --platform=linux/amd64 amazonlinux:latest
 
-ARG MODULE
+RUN mkdir build
 
 # Copies your code file from your action repository to the filesystem path `/` of the container
-COPY build-caddy.sh /build-caddy.sh
+COPY docker/build-caddy.sh /build/build-caddy.sh
 
-# Code file to execute when the docker container starts up
-CMD ["/build-caddy.sh", "${MODULE}"]
+RUN chmod +x /build/build-caddy.sh
+
+ENTRYPOINT ["/build/build-caddy.sh"]
