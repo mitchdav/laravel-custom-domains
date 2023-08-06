@@ -68,8 +68,8 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v1
         with:
-          name:     ${{ github.ref }}
-          tag_name: ${{ github.ref }}
+          name:     ${{ github.sha }}
+          tag_name: ${{ github.sha }}
           files:    |
                     caddy
                     caddy-with-dynamodb
