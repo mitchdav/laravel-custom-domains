@@ -61,23 +61,30 @@ jobs:
     name:    Release
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
       - name: Download all workflow run artifacts
         uses: actions/download-artifact@v3
         with:
           path: artifacts
 
+      - name: Move files to build directory
+        run:  |
+              mkdir release
+              
+              mv caddy/Caddyfile ./release/Caddyfile
+              mv artifacts/caddy/caddy ./release/caddy
+              
+              mv caddy/Caddyfile-with-dynamodb ./release/Caddyfile-with-dynamodb
+              mv artifacts/caddy-with-dynamodb/caddy ./release/caddy-with-dynamodb
+              
+              mv caddy/Caddyfile-with-s3 ./release/Caddyfile-with-s3
+              mv artifacts/caddy-with-s3/caddy ./release/caddy-with-s3
+
       - name: Set release tag environment variable
         run:  |
               echo "RELEASE_TAG=$(date +%s)" >> $GITHUB_ENV
-
-      - name: Check files
-        run:  ls -al -R
-
-      - name: Check files
-        run:  |
-              mv artifacts/caddy/caddy ./caddy
-              mv artifacts/caddy-with-dynamodb/caddy ./caddy-with-dynamodb
-              mv artifacts/caddy-with-s3/caddy ./caddy-with-s3
 
       - name: Create release
         uses: softprops/action-gh-release@v1
@@ -85,6 +92,11 @@ jobs:
           name:     ${{ env.RELEASE_TAG }}
           tag_name: ${{ env.RELEASE_TAG }}
           files:    |
-                    ./caddy
-                    ./caddy-with-dynamodb
-                    ./caddy-with-s3
+                    ./release/Caddyfile
+                    ./release/caddy
+                    
+                    ./release/Caddyfile-with-dynamodb
+                    ./release/caddy-with-dynamodb
+                    
+                    ./release/Caddyfile-with-s3
+                    ./release/caddy-with-s3
