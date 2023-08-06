@@ -65,10 +65,15 @@ jobs:
       - name: Download all workflow run artifacts
         uses: actions/download-artifact@v3
 
+      - name: Set release tag environment variable
+        run: |
+             echo "RELEASE_TAG=$(date +%s)" >> $GITHUB_ENV
+
       - name: Create release
         uses: softprops/action-gh-release@v1
         with:
-          name:  ${{ github.sha }}
+          name:  ${{ env.RELEASE_TAG }}
+          tag_name: ${{ env.RELEASE_TAG }}
           files: |
                  ./caddy
                  ./caddy-with-dynamodb
