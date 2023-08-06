@@ -15,8 +15,10 @@
     }
   }
 
-  storage dynamodb INJECT_TABLE {
-    aws_region INJECT_REGION
+  storage s3 {
+    host INJECT_S3_HOST
+    bucket INJECT_BUCKET
+    use_iam_provider true
   }
 
   storage_clean_interval 32d
