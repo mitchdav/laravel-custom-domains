@@ -11,21 +11,27 @@ on:
 
 jobs:
   build:
-    name:    Build Caddy
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
 
     strategy:
       matrix:
         include:
           - module:     ''
             asset_name: caddy
-
-          - module:     github.com/ss098/certmagic-s3
-            asset_name: caddy-with-s3
+            job_name:   'Build Caddy'
 
           - module:     github.com/silinternational/certmagic-storage-dynamodb/v3
             asset_name: caddy-with-dynamodb
+            job_name:   'Build Caddy with DynamoDB'
 
-    runs-on: ubuntu-latest
+          - module:     github.com/ss098/certmagic-s3
+            asset_name: caddy-with-s3
+            job_name:   'Build Caddy with S3'
+
+    name:    ${{ matrix.job_name }}
 
     steps:
       - name: Checkout
@@ -41,16 +47,30 @@ jobs:
       - name: Copy Caddy executable from Docker image
         run:  docker cp caddy_builder:/build/caddy ./caddy
 
-      - name: A
-        run:  ls -al .
+      - name: Upload executable as artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name:           ${{ matrix.asset_name }}
+          path:           ./caddy
+          retention-days: 1
 
-      - name: B
-        run:  pwd
+  release:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    name:    Release
+
+    steps:
+      - name: Download all workflow run artifacts
+        uses: actions/download-artifact@v3
 
       - name: Upload executable to release
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file:       ./caddy
+          file:       ./caddy*
+          file_glob:  true
           asset_name: ${{ matrix.asset_name }}
           tag:        ${{ github.ref }}
