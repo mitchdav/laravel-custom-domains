@@ -8,7 +8,7 @@ yum update -y
 yum install -y wget tar xz gzip which
 
 # Download and install Go 1.20.5
-echo "Downloading Go source..."
+echo "Installing Go..."
 rm -rf /usr/local/go
 wget -q https://go.dev/dl/go1.20.5.linux-amd64.tar.gz -O go.tar.gz
 tar -C /usr/local -xzf go.tar.gz
@@ -24,14 +24,18 @@ echo "Installed Go"
 go version
 
 echo "Installing xcaddy..."
-go install -v github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+GOBIN=/usr/local/go/bin/ go install -v github.com/caddyserver/xcaddy/cmd/xcaddy@latest
 
 echo "Installed xcaddy"
-ls -al .
-ls -al go
-ls -al /usr/local/go/bin
-
-which xcaddy
 xcaddy version
-#
-#~/go/bin/xcaddy build --with $1
+
+echo "Building Caddy..."
+if [ -n "$1" ];
+  then xcaddy build --with $1;
+  else xcaddy build;
+fi
+
+echo "Built Caddy"
+caddy version
+
+ls -al .
