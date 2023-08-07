@@ -83,6 +83,7 @@ jobs:
               mv artifacts/caddy-with-s3/caddy ./release/caddy-with-s3
               
               mv caddy/caddy.service ./release/caddy.service
+              mv cloudwatch/amazon-cloudwatch-agent.json ./release/amazon-cloudwatch-agent.json
 
       - name: Set release tag environment variable
         run:  |
@@ -104,3 +105,4 @@ jobs:
                     ./release/caddy-with-s3
                     
                     ./release/caddy.service
+                    ./release/amazon-cloudwatch-agent.json
