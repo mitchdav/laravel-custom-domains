@@ -1,6 +1,6 @@
 {
   on_demand_tls {
-    ask INJECT_ASK_URL
+    ask {{INJECT_ASK_URL}}
   }
 
   log default {
@@ -16,8 +16,8 @@
   }
 
   storage s3 {
-    host INJECT_S3_HOST
-    bucket INJECT_S3_BUCKET
+    host {{INJECT_S3_HOST}}
+    bucket {{INJECT_S3_BUCKET}}
     use_iam_provider true
   }
 
@@ -29,7 +29,7 @@
 }
 
 :443 {
-  tls INJECT_NOTIFICATION_EMAIL {
+  tls {{INJECT_NOTIFICATION_EMAIL}} {
     on_demand
   }
 
@@ -45,9 +45,9 @@
     }
   }
 
-  reverse_proxy * https://INJECT_TARGET_URL {
-    header_up Host INJECT_TARGET_URL
-    header_up INJECT_HEADER_NAME {host}
+  reverse_proxy * https://{{INJECT_TARGET_URL}} {
+    header_up Host {{INJECT_TARGET_URL}}
+    header_up {{INJECT_HEADER_NAME}} {host}
     health_timeout 5s
   }
 }
