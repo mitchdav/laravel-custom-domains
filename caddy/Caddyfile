@@ -1,11 +1,11 @@
 {
   on_demand_tls {
-    ask INJECT_ASK_URL
+    ask {{INJECT_ASK_URL}}
   }
 
   log default {
     output file /var/log/caddy/caddy.log {
-      roll_size 1MiB
+      roll_size 10MiB
       roll_uncompressed
     }
 
@@ -23,7 +23,7 @@
 }
 
 :443 {
-  tls INJECT_EMAIL {
+  tls {{INJECT_EMAIL}} {
     on_demand
   }
 
@@ -39,9 +39,9 @@
     }
   }
 
-  reverse_proxy * https://INJECT_TARGET_URL {
-    header_up Host INJECT_TARGET_URL
-    header_up INJECT_HEADER {host}
+  reverse_proxy * https://{{INJECT_TARGET_URL}} {
+    header_up Host {{INJECT_TARGET_URL}}
+    header_up {{INJECT_HEADER}} {host}
     health_timeout 5s
   }
 }
