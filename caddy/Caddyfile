@@ -41,7 +41,8 @@
 
   reverse_proxy * https://{{INJECT_TARGET_URL}} {
     header_up Host {{INJECT_TARGET_URL}}
-    header_up {{INJECT_HEADER}} {host}
+    header_up {{INJECT_CUSTOM_HOST_HEADER_NAME}} {host}
+    header_up {{INJECT_CUSTOM_HOST_SECRET_HEADER_NAME}} "{{INJECT_CUSTOM_HOST_SECRET_HEADER_VALUE}}"
     health_timeout 5s
   }
 }
