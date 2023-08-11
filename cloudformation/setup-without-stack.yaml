@@ -1,0 +1,320 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description:              Custom Domains - Setup
+
+Parameters:
+  Name:
+    Description:           Name of the global accelerator to create
+    Type:                  String
+    MinLength:             1
+    MaxLength:             64
+    ConstraintDescription: Must contain only alphanumeric characters or hyphens (-), must not begin or end with a hyphen, and must be a maximum of 64 characters long.
+
+  ClientAffinity:
+    Description: The client affinity for the global accelerator
+    Type:        String
+    Default:     NONE
+    AllowedValues:
+      - NONE
+      - SOURCE_IP
+
+  StorageModule:
+    Description: The module that Caddy will use to store certificates
+    Type:        String
+    Default:     S3
+    AllowedValues:
+      - DynamoDB
+      - S3
+
+  CreateCloudFormationRoles:
+    Description: Whether to create CloudFormation administration roles. Set to false if you have already created these.
+    Type:        String
+    Default:     true
+    AllowedValues:
+      - true
+      - false
+
+  NotificationEmail:
+    Description: The email address to notify when there are any scaling activities or Let's Encrypt issues.
+    Type:        String
+
+  AskUrl:
+    Description: The URL that Caddy will ask for authorization to generate a certificate. This MUST include the schema prefix (DO include http:// or https://).
+    Type:        String
+
+  TargetUrl:
+    Description: The URL that Caddy will forward requests to. This MUST NOT include the schema prefix (DON'T include http:// or https://).
+    Type:        String
+
+  HeaderName:
+    Description: The header name that Caddy will send through for any proxied requests.
+    Type:        String
+    Default:     Custom-Domain
+
+  InstanceType:
+    Description: The EC2 instance type.
+    Type:        String
+    Default:     t3.small
+    AllowedValues:
+      - t3.nano
+      - t3.micro
+      - t3.small
+      - t3.medium
+      - t3.large
+      - t3.xlarge
+      - t3.2xlarge
+
+  LatestAmiId:
+    Description: The latest Amazon Linux 2 AMI from the Parameter Store.
+    Type:        'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default:     /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2
+
+  SSHWhitelistRange:
+    Description:           The IP address range that can be used to SSH into the EC2 instances.
+    Type:                  String
+    MinLength:             9
+    MaxLength:             18
+    Default:               0.0.0.0/0
+    ConstraintDescription: Must be a valid IP CIDR range of the form x.x.x.x/x.
+
+  MinInstances:
+    Description:           The minimum number of EC2 instances to scale down to.
+    Type:                  Number
+    MinValue:              1
+    Default:               1
+    ConstraintDescription: Must be greater than or equal to 1.
+
+  MaxInstances:
+    Description:           The maximum number of EC2 instances to scale up to.
+    Type:                  Number
+    MinValue:              2
+    Default:               3
+    ConstraintDescription: Must be greater than or equal to 2.
+
+  Regions:
+    Description: The regions to deploy instances to.
+    Type:        CommaDelimitedList
+
+Conditions:
+  ShouldCreateCloudFormationRoles: !Equals
+    - !Ref CreateCloudFormationRoles
+    - true
+
+  UsingDynamoDB: !Equals
+    - !Ref StorageModule
+    - DynamoDB
+
+  UsingS3: !Equals
+    - !Ref StorageModule
+    - S3
+
+Outputs:
+  GlobalAcceleratorArn:
+    Value: !Ref GlobalAccelerator
+
+  GlobalAcceleratorDnsName:
+    Value: !GetAtt
+      - GlobalAccelerator
+      - DnsName
+
+  GlobalAcceleratorIpv4Addresses:
+    Value: !Join
+      - ', '
+      - !GetAtt
+        - GlobalAccelerator
+        - Ipv4Addresses
+
+  CaddyDynamoDBTable:
+    Value: !Ref CaddyDynamoDBTable
+
+  CaddyS3Bucket:
+    Value: !Ref CaddyS3Bucket
+
+Resources:
+  GlobalAccelerator:
+    Type: 'AWS::GlobalAccelerator::Accelerator'
+    Properties:
+      Name: !Ref Name
+
+  CaddyDynamoDBTable:
+    Type: 'AWS::DynamoDB::Table'
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: PrimaryKey
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      KeySchema:
+        - AttributeName: PrimaryKey
+          KeyType:       HASH
+      TableClass:  STANDARD
+      TableName: !Join
+        - "-"
+        -
+          - "custom-domains"
+          - !Select
+            - 0
+            - !Split
+              - "-"
+              - !Select
+                - 2
+                - !Split
+                  - "/"
+                  - !Ref "AWS::StackId"
+
+  CaddyS3Bucket:
+    Type:           'AWS::S3::Bucket'
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Join
+        - "-"
+        -
+          - "custom-domains"
+          - !Select
+            - 0
+            - !Split
+              - "-"
+              - !Select
+                - 2
+                - !Split
+                  - "/"
+                  - !Ref "AWS::StackId"
+
+  GlobalAcceleratorListener:
+    Type:      'AWS::GlobalAccelerator::Listener'
+    DependsOn: GlobalAccelerator
+    Properties:
+      AcceleratorArn: !Ref GlobalAccelerator
+      ClientAffinity: !Ref ClientAffinity
+      PortRanges:
+        - FromPort: 80
+          ToPort:   80
+        - FromPort: 443
+          ToPort:   443
+      Protocol:            TCP
+
+  AdministrationRole:
+    Type:      'AWS::IAM::Role'
+    Condition: ShouldCreateCloudFormationRoles
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path:     /
+      Policies:
+        - PolicyName: AssumeRole-AWSCloudFormationStackSetExecutionRole
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'sts:AssumeRole'
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/AWSCloudFormationStackSetExecutionRole'
+      RoleName: AWSCloudFormationStackSetAdministrationRole
+
+  ExecutionRole:
+    Type:      'AWS::IAM::Role'
+    Condition: ShouldCreateCloudFormationRoles
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS:
+                - !Ref 'AWS::AccountId'
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AdministratorAccess'
+      Path:     /
+      RoleName: AWSCloudFormationStackSetExecutionRole
+
+  EC2Role:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - !If [ UsingDynamoDB, !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonDynamoDBFullAccess', !Ref 'AWS::NoValue' ]
+        - !If [ UsingS3, !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonS3FullAccess', !Ref 'AWS::NoValue' ]
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/CloudWatchAgentServerPolicy'
+      Path: /
+      RoleName: !Join
+        - "-"
+        -
+          - "custom-domains"
+          - !Select
+            - 0
+            - !Split
+              - "-"
+              - !Select
+                - 2
+                - !Split
+                  - "/"
+                  - !Ref "AWS::StackId"
+          - "ec2-role"
+
+  EC2InstanceProfile:
+    Type:      'AWS::IAM::InstanceProfile'
+    DependsOn: EC2Role
+    Properties:
+      InstanceProfileName: !Join
+        - "-"
+        -
+          - "custom-domains"
+          - !Select
+            - 0
+            - !Split
+              - "-"
+              - !Select
+                - 2
+                - !Split
+                  - "/"
+                  - !Ref "AWS::StackId"
+          - "instance-profile"
+      Path: /
+      Roles:
+        - !Ref EC2Role
+
+  AutoScalingEventLambdaRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/GlobalAcceleratorFullAccess'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Path: /
+      RoleName: !Join
+        - "-"
+        -
+          - "custom-domains"
+          - !Select
+            - 0
+            - !Split
+              - "-"
+              - !Select
+                - 2
+                - !Split
+                  - "/"
+                  - !Ref "AWS::StackId"
+          - "auto-scaling-event-lambda-role"

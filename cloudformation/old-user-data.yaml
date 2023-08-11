@@ -1,0 +1,117 @@
+UserData:
+  Fn::Base64: !Sub
+    - |+
+      #!/bin/bash
+      
+      yum update -y
+      yum install -y amazon-cloudwatch-agent
+      
+      # Create the caddy user and group to then run as a service
+      groupadd \
+        --system \
+        caddy
+      
+      useradd \
+        --system \
+        --gid caddy \
+        --create-home \
+        --home-dir /var/lib/caddy \
+        --shell /usr/sbin/nologin \
+        --comment "Caddy web server" \
+        caddy
+      
+      # Download relevant version of Caddy from GitHub release
+      curl -s https://api.github.com/repos/mitchdav/laravel-custom-domains/releases/latest \
+      | grep "browser_download_url" \
+      | grep "${Caddy}" \
+      | cut -d : -f 2,3 \
+      | tr -d \" \
+      | wget -qi - -O /usr/bin/caddy
+      
+      # Make Caddy executable
+      chmod +x /usr/bin/caddy
+      
+      # Create the Caddy directory and Caddyfile
+      mkdir /etc/caddy
+      
+      # Write the config file
+      curl -s https://api.github.com/repos/mitchdav/laravel-custom-domains/releases/latest \
+      | grep "browser_download_url" \
+      | grep "${Caddyfile}" \
+      | cut -d : -f 2,3 \
+      | tr -d \" \
+      | wget -qi - -O /etc/caddy/Caddyfile
+      
+      # Inject variables to overwrite default Caddyfile template with our parameters from CloudFormation
+      sed -i 's\INJECT_ASK_URL\${InjectAskUrl}\' /etc/caddy/Caddyfile
+      sed -i 's\INJECT_DYNAMODB_REGION\${InjectDynamoDBRegion}\' /etc/caddy/Caddyfile
+      sed -i 's\INJECT_DYNAMODB_TABLE\${InjectDynamoDBTable}\' /etc/caddy/Caddyfile
+      sed -i 's\INJECT_HEADER_NAME\${InjectHeaderName}\' /etc/caddy/Caddyfile
+      sed -i 's\INJECT_NOTIFICATION_EMAIL\${InjectCaddyNotificationEmail}\' /etc/caddy/Caddyfile
+      sed -i 's\INJECT_S3_BUCKET\${InjectS3Bucket}\' /etc/caddy/Caddyfile
+      sed -i 's\INJECT_S3_HOST\${InjectS3Host}\' /etc/caddy/Caddyfile
+      sed -i 's\INJECT_TARGET_URL\${InjectTargetUrl}\' /etc/caddy/Caddyfile
+      
+      # Create the log directory for Caddy
+      mkdir /var/log/caddy
+      
+      chown caddy:caddy /etc/caddy/Caddyfile
+      chown caddy:caddy /var/log/caddy
+      
+      # Install Caddy as a service
+      curl -s https://api.github.com/repos/mitchdav/laravel-custom-domains/releases/latest \
+      | grep "browser_download_url" \
+      | grep "service" \
+      | cut -d : -f 2,3 \
+      | tr -d \" \
+      | wget -qi - -O /etc/systemd/system/caddy.service
+      
+      # Reload and enable Caddy
+      systemctl daemon-reload
+      systemctl enable --now caddy
+      systemctl status caddy
+      
+      CADDY_RUNNING=$?
+      
+      if [ $CADDY_RUNNING -ne 0 ]; then                       
+        # Send the exit code from `systemctl status caddy` as a signal to Cloudformation monitoring
+        /opt/aws/bin/cfn-signal --stack ${StackId} --region ${Region} --resource AutoScalingGroup -e $CADDY_RUNNING
+      fi
+      
+      # Write the CloudWatch agent config file
+      curl -s https://api.github.com/repos/mitchdav/laravel-custom-domains/releases/latest \
+      | grep "browser_download_url" \
+      | grep "amazon-cloudwatch-agent" \
+      | cut -d : -f 2,3 \
+      | tr -d \" \
+      | wget -qi - -O /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+      
+      sed -i 's\INJECT_REGION\${InjectRegion}\' /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+      sed -i 's\INJECT_UNIQUE_PREFIX\${InjectUniquePrefix}\' /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+      
+      /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+      
+      /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a status | grep running
+      
+      # Send the exit code from `/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a status | grep running` as a signal to CloudFormation monitoring
+      /opt/aws/bin/cfn-signal --stack ${StackId} --region ${Region} --resource AutoScalingGroup -e $?
+
+    - Caddy:
+        Fn::FindInMap: [ Assets, Caddy, !Ref StorageModule ]
+      Caddyfile:
+        Fn::FindInMap: [ Assets, Caddyfile, !Ref StorageModule ]
+      Region: !Ref                                     AWS::Region
+      StackId: !Ref                                    AWS::StackId
+
+      InjectAskUrl: !Ref                               AskUrl
+      InjectDynamoDBRegion: !Ref                       MasterRegion
+      InjectDynamoDBTable: !Ref                        CaddyDynamoDBTable
+      InjectHeaderName: !Ref                           HeaderName
+      InjectCaddyNotificationEmail: !Ref               CaddyNotificationEmail
+      InjectS3Bucket: !Ref                             CaddyS3Bucket
+      InjectS3Host: !Sub                               's3.${AWS::Region}.amazonaws.com'
+      InjectTargetUrl: !Ref                            TargetUrl
+
+      InjectRegion: !Ref                               MasterRegion
+      InjectUniquePrefix: !Ref                         UniquePrefix
+                       

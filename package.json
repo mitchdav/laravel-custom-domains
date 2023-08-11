@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "@aws-sdk/client-ec2": "^3.388.0",
+    "@aws-sdk/client-global-accelerator": "^3.388.0"
+  }
+}

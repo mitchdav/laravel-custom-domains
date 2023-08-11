@@ -1,0 +1,1111 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description:              Custom Domains - Global Stack
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Caddy"
+        Parameters:
+          - StorageModule
+          - AskUrl
+          - TargetUrl
+          - HeaderName
+          - CaddyNotificationEmail
+
+      - Label:
+          default: "GlobalAccelerator"
+        Parameters:
+          - Regions
+          - ClientAffinity
+
+      - Label:
+          default: "EC2"
+        Parameters:
+          - InstanceType
+          - MinInstances
+          - MaxInstances
+          - SSHWhitelistRange
+          - AutoScalingNotificationEmail
+
+      - Label:
+          default: "CloudFormation"
+        Parameters:
+          - CreateCloudFormationRoles
+
+    ParameterLabels:
+      StorageModule:
+        default: "Which storage module should Caddy use to store certificates?"
+      AskUrl:
+        default: "Which URL should Caddy ask for authorization before issuing a certificate?"
+      TargetUrl:
+        default: "Which target host (URL) should Caddy forward requests to?"
+      HeaderName:
+        default: "Which header name should Caddy send when forwarding the original custom domain to the target?"
+      CaddyNotificationEmail:
+        default: "Which email address should be associated with issued certificates?"
+
+      InstanceType:
+        default: "Which instance type should be used to run Caddy?"
+      MinInstances:
+        default: "What is the minimum number of Caddy instances that should be run in each region?"
+      MaxInstances:
+        default: "What is the maximum number of Caddy instances that should be run in each region?"
+      SSHWhitelistRange:
+        default: "Which IP range should be permitted to SSH into the Caddy instances?"
+      AutoScalingNotificationEmail:
+        default: "Who should be notified when there are Caddy instance scaling activities?"
+
+      Regions:
+        default: "Which regions should we deploy EC2 instances to?"
+      ClientAffinity:
+        default: "Which client affinity setting should we use?"
+
+      CreateCloudFormationRoles:
+        default: "Should we automatically create the necessary CloudFormation IAM roles required to run this stack?"
+
+Parameters:
+  CreateCloudFormationRoles:
+    Description: Set to No if you have already created the AWSCloudFormationStackSetAdministrationRole and AWSCloudFormationStackSetExecutionRole roles.
+    Type:        String
+    Default:     'Yes'
+    AllowedValues:
+      - 'Yes'
+      - 'No'
+
+  ClientAffinity:
+    Description: Most applications can use NONE. Set to SOURCE_IP if you need to direct all requests from a user at a specific source (client) IP address to the same endpoint resource, to maintain client affinity.
+    Type:        String
+    Default:     NONE
+    AllowedValues:
+      - NONE
+      - SOURCE_IP
+
+  Regions:
+    Description: Separate regions using commas. The more regions you specify, the better your user experience will be globally, but the higher your bill will be too.
+    Type:        CommaDelimitedList
+
+  StorageModule:
+    Description: The module that Caddy will use to store certificates.
+    Type:        String
+    Default:     S3
+    AllowedValues:
+      - DynamoDB
+      - S3
+
+  AskUrl:
+    Description:    This MUST include the schema prefix (DO include http:// or https://).
+    Type:           String
+    AllowedPattern: ^(http|https):\/\/[A-Za-z\d][\w.-]+(:\d+)?(\/.*)?$
+
+  TargetUrl:
+    Description:    This MUST NOT include the schema prefix (DON'T include http:// or https://).
+    Type:           String
+    AllowedPattern: ^[A-Za-z\d][\w.-]+(:\d+)?(\/.*)?$
+
+  HeaderName:
+    Description: The header name that Caddy will send through for any proxied requests.
+    Type:        String
+    Default:     Custom-Domain
+
+  CaddyNotificationEmail:
+    Description: This email address will be notified if there are issues renewing certificates.
+    Type:        String
+
+  InstanceType:
+    Description: The EC2 instance type.
+    Type:        String
+    Default:     t3.small
+    AllowedValues:
+      - t3.nano
+      - t3.micro
+      - t3.small
+      - t3.medium
+      - t3.large
+      - t3.xlarge
+      - t3.2xlarge
+
+  SSHWhitelistRange:
+    Description:           The IP address range that can be used to SSH into the EC2 instances.
+    Type:                  String
+    MinLength:             9
+    MaxLength:             18
+    Default:               0.0.0.0/0
+    ConstraintDescription: Must be a valid IP CIDR range of the form x.x.x.x/x.
+
+  MinInstances:
+    Description:           The minimum number of EC2 instances to scale down to.
+    Type:                  Number
+    MinValue:              1
+    Default:               1
+    ConstraintDescription: Must be greater than or equal to 1.
+
+  MaxInstances:
+    Description:           The maximum number of EC2 instances to scale up to.
+    Type:                  Number
+    MinValue:              2
+    Default:               3
+    ConstraintDescription: Must be greater than or equal to 2.
+
+  AutoScalingNotificationEmail:
+    Description: The email address to notify when auto scaling activities occur.
+    Type:        String
+
+Conditions:
+  ShouldCreateCloudFormationRoles: !Equals
+    - !Ref CreateCloudFormationRoles
+    - 'Yes'
+
+  UsingDynamoDB: !Equals
+    - !Ref StorageModule
+    - DynamoDB
+
+  UsingS3: !Equals
+    - !Ref StorageModule
+    - S3
+
+Outputs:
+  GlobalAcceleratorArn:
+    Value: !Ref GlobalAccelerator
+
+  GlobalAcceleratorDnsName:
+    Value: !GetAtt
+      - GlobalAccelerator
+      - DnsName
+
+  GlobalAcceleratorIpv4Addresses:
+    Value: !Join
+      - ', '
+      - !GetAtt
+        - GlobalAccelerator
+        - Ipv4Addresses
+
+  CaddyDynamoDBTable:
+    Value: !Ref CaddyDynamoDBTable
+
+  CaddyS3Bucket:
+    Value: !Ref CaddyS3Bucket
+
+Resources:
+  GlobalAccelerator:
+    Type: 'AWS::GlobalAccelerator::Accelerator'
+    Properties:
+      Name: !Join
+        - "-"
+        -
+          - "custom-domains"
+          - !Select
+            - 0
+            - !Split
+              - "-"
+              - !Select
+                - 2
+                - !Split
+                  - "/"
+                  - !Ref "AWS::StackId"
+
+  CaddyDynamoDBTable:
+    Type: 'AWS::DynamoDB::Table'
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: PrimaryKey
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      KeySchema:
+        - AttributeName: PrimaryKey
+          KeyType:       HASH
+      TableClass:  STANDARD
+      TableName: !Join
+        - "-"
+        -
+          - "custom-domains"
+          - !Select
+            - 0
+            - !Split
+              - "-"
+              - !Select
+                - 2
+                - !Split
+                  - "/"
+                  - !Ref "AWS::StackId"
+
+  CaddyS3Bucket:
+    Type:           'AWS::S3::Bucket'
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Join
+        - "-"
+        -
+          - "custom-domains"
+          - !Select
+            - 0
+            - !Split
+              - "-"
+              - !Select
+                - 2
+                - !Split
+                  - "/"
+                  - !Ref "AWS::StackId"
+
+  GlobalAcceleratorListener:
+    Type:      'AWS::GlobalAccelerator::Listener'
+    DependsOn: GlobalAccelerator
+    Properties:
+      AcceleratorArn: !Ref GlobalAccelerator
+      ClientAffinity: !Ref ClientAffinity
+      PortRanges:
+        - FromPort: 80
+          ToPort:   80
+        - FromPort: 443
+          ToPort:   443
+      Protocol:            TCP
+
+  AdministrationRole:
+    Type:      'AWS::IAM::Role'
+    Condition: ShouldCreateCloudFormationRoles
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path:     /
+      Policies:
+        - PolicyName: AssumeRole-AWSCloudFormationStackSetExecutionRole
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'sts:AssumeRole'
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/AWSCloudFormationStackSetExecutionRole'
+      RoleName: AWSCloudFormationStackSetAdministrationRole
+
+  ExecutionRole:
+    Type:      'AWS::IAM::Role'
+    Condition: ShouldCreateCloudFormationRoles
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS:
+                - !Ref 'AWS::AccountId'
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AdministratorAccess'
+      Path:     /
+      RoleName: AWSCloudFormationStackSetExecutionRole
+
+  EC2Role:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - !If [ UsingDynamoDB, !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonDynamoDBFullAccess', !Ref 'AWS::NoValue' ]
+        - !If [ UsingS3, !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonS3FullAccess', !Ref 'AWS::NoValue' ]
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/CloudWatchAgentServerPolicy'
+      Path: /
+      RoleName: !Join
+        - "-"
+        -
+          - "custom-domains"
+          - !Select
+            - 0
+            - !Split
+              - "-"
+              - !Select
+                - 2
+                - !Split
+                  - "/"
+                  - !Ref "AWS::StackId"
+          - "ec2-role"
+
+  EC2InstanceProfile:
+    Type:      'AWS::IAM::InstanceProfile'
+    DependsOn: EC2Role
+    Properties:
+      InstanceProfileName: !Join
+        - "-"
+        -
+          - "custom-domains"
+          - !Select
+            - 0
+            - !Split
+              - "-"
+              - !Select
+                - 2
+                - !Split
+                  - "/"
+                  - !Ref "AWS::StackId"
+          - "instance-profile"
+      Path: /
+      Roles:
+        - !Ref EC2Role
+
+  AutoScalingEventLambdaRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/GlobalAcceleratorFullAccess'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Path: /
+      RoleName: !Join
+        - "-"
+        -
+          - "custom-domains"
+          - !Select
+            - 0
+            - !Split
+              - "-"
+              - !Select
+                - 2
+                - !Split
+                  - "/"
+                  - !Ref "AWS::StackId"
+          - "auto-scaling-event-lambda-role"
+
+  # https://garbe.io/blog/2017/07/17/cloudformation-hacks/
+  # Here we apply a conditional DependsOn for our StackSet resource, so that the CloudFormationRoles exist before we run the StackSet
+  CloudFormationRolesWaitHandle:
+    Condition: ShouldCreateCloudFormationRoles
+    DependsOn:
+      - AdministrationRole
+      - ExecutionRole
+    Type:      "AWS::CloudFormation::WaitConditionHandle"
+
+  CloudFormationRolesEmptyWaitHandle:
+    Type: "AWS::CloudFormation::WaitConditionHandle"
+
+  CloudFormationRolesCondition:
+    Type: "AWS::CloudFormation::WaitCondition"
+    Properties:
+      Handle: !If [ ShouldCreateCloudFormationRoles, !Ref CloudFormationRolesWaitHandle, !Ref CloudFormationRolesEmptyWaitHandle ]
+      Timeout: "1"
+      Count:   0
+
+  StackSet:
+    Type: 'AWS::CloudFormation::StackSet'
+    DependsOn:
+      - GlobalAcceleratorListener
+      - AutoScalingEventLambdaRole
+      - CaddyDynamoDBTable
+      - CaddyS3Bucket
+      - CloudFormationRolesCondition
+    Properties:
+      PermissionModel: SELF_MANAGED
+      StackSetName:    Custom-Domains-Region
+      StackInstancesGroup:
+        - DeploymentTargets:
+            Accounts:
+              - !Ref AWS::AccountId
+          Regions: !Ref Regions
+      Parameters:
+        - ParameterKey: UniquePrefix
+          ParameterValue: !Join
+            - "-"
+            -
+              - "custom-domains"
+              - !Select
+                - 0
+                - !Split
+                  - "-"
+                  - !Select
+                    - 2
+                    - !Split
+                      - "/"
+                      - !Ref "AWS::StackId"
+
+        - ParameterKey:        CaddyNotificationEmail
+          ParameterValue: !Ref CaddyNotificationEmail
+
+        - ParameterKey:        AutoScalingNotificationEmail
+          ParameterValue: !Ref AutoScalingNotificationEmail
+
+        - ParameterKey:        StorageModule
+          ParameterValue: !Ref StorageModule
+
+        - ParameterKey:        AskUrl
+          ParameterValue: !Ref AskUrl
+
+        - ParameterKey:        TargetUrl
+          ParameterValue: !Ref TargetUrl
+
+        - ParameterKey:        HeaderName
+          ParameterValue: !Ref HeaderName
+
+        - ParameterKey:        InstanceType
+          ParameterValue: !Ref InstanceType
+
+        - ParameterKey:        SSHWhitelistRange
+          ParameterValue: !Ref SSHWhitelistRange
+
+        - ParameterKey:        MinInstances
+          ParameterValue: !Ref MinInstances
+
+        - ParameterKey:        MaxInstances
+          ParameterValue: !Ref MaxInstances
+
+        - ParameterKey:        GlobalAcceleratorListener
+          ParameterValue: !Ref GlobalAcceleratorListener
+
+        - ParameterKey: AutoScalingEventLambdaRoleArn
+          ParameterValue: !GetAtt
+            - AutoScalingEventLambdaRole
+            - Arn
+
+        - ParameterKey:        EC2InstanceProfile
+          ParameterValue: !Ref EC2InstanceProfile
+
+        - ParameterKey:        MasterRegion
+          ParameterValue: !Ref AWS::Region
+
+        - ParameterKey:        CaddyDynamoDBTable
+          ParameterValue: !Ref CaddyDynamoDBTable
+
+        - ParameterKey:        CaddyS3Bucket
+          ParameterValue: !Ref CaddyS3Bucket
+
+      TemplateBody:    |
+                       AWSTemplateFormatVersion: 2010-09-09
+                       Description:              Custom Domains - Per Region Stack
+                       
+                       Parameters:
+                         UniquePrefix:
+                           Description: The unique prefix that should be added to relevant resources.
+                           Type:        String
+                       
+                         CaddyNotificationEmail:
+                           Description: The email address to associate when issuing certificates.
+                           Type:        String
+
+                         AutoScalingNotificationEmail:
+                           Description: The email address to notify when auto scaling activities occur.
+                           Type:        String
+                       
+                         StorageModule:
+                           Description: The module that Caddy will use to store certificates.
+                           Type:        String
+                           Default:     S3
+                           AllowedValues:
+                             - DynamoDB
+                             - S3
+                       
+                         AskUrl:
+                           Description: The URL that Caddy will ask for authorization to generate a certificate. This MUST include the schema prefix (DO include http:// or https://).
+                           Type:        String
+                       
+                         TargetUrl:
+                           Description: The URL that Caddy will forward requests to. This MUST NOT include the schema prefix (DON'T include http:// or https://).
+                           Type:        String
+                       
+                         HeaderName:
+                           Description: The header name that Caddy will send through for any proxied requests.
+                           Type:        String
+                           Default:     Custom-Domain
+                       
+                         InstanceType:
+                           Description: The EC2 instance type.
+                           Type:        String
+                           Default:     t3.small
+                           AllowedValues:
+                             - t3.nano
+                             - t3.micro
+                             - t3.small
+                             - t3.medium
+                             - t3.large
+                             - t3.xlarge
+                             - t3.2xlarge
+                       
+                         SSHWhitelistRange:
+                           Description:           The IP address range that can be used to SSH into the EC2 instances.
+                           Type:                  String
+                           MinLength:             9
+                           MaxLength:             18
+                           Default:               0.0.0.0/0
+                           ConstraintDescription: Must be a valid IP CIDR range of the form x.x.x.x/x.
+                       
+                         MinInstances:
+                           Description:           The minimum number of EC2 instances to scale down to.
+                           Type:                  Number
+                           MinValue:              1
+                           Default:               1
+                           ConstraintDescription: Must be greater than or equal to 1.
+                       
+                         MaxInstances:
+                           Description:           The maximum number of EC2 instances to scale up to.
+                           Type:                  Number
+                           MinValue:              2
+                           Default:               3
+                           ConstraintDescription: Must be greater than or equal to 2.
+                       
+                         GlobalAcceleratorListener:
+                           Description: The ARN of the global accelerator listener to attach endpoint groups to. You can copy this from the outputs section for the setup stack.
+                           Type:        String
+                       
+                         AutoScalingEventLambdaRoleArn:
+                           Description: The ARN of the IAM role to use when invoking the auto scaling event lambda. You can copy this from the outputs section for the setup stack.
+                           Type:        String
+                       
+                         EC2InstanceProfile:
+                           Description: The name of the EC2 instance profile to use. You can copy this from the outputs section for the setup stack.
+                           Type:        String
+                       
+                         LatestAmiId:
+                           Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+                           Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+                       
+                         MasterRegion:
+                           Description: The master region where your Caddy storage was configured. You can copy this from the outputs section for the setup stack.
+                           Type:        String
+                       
+                         CaddyDynamoDBTable:
+                           Description: The DynamoDB table where your Caddy certificates will be stored, if using DynamoDB. You can copy this from the outputs section for the setup stack.
+                           Type:        String
+                       
+                         CaddyS3Bucket:
+                           Description: The S3 bucket where your Caddy certificates will be stored, if using S3. You can copy this from the outputs section for the setup stack.
+                           Type:        String
+                       
+                       Conditions:
+                         UsingDynamoDB: !Equals
+                           - !Ref StorageModule
+                           - DynamoDB
+                       
+                         UsingS3: !Equals
+                           - !Ref StorageModule
+                           - S3
+                       
+                       Mappings:
+                         Networking:
+                           VPC:
+                             CIDR: 10.0.0.0/16
+                       
+                           PublicSubnetOne:
+                             CIDR: 10.0.0.0/24
+                       
+                           PublicSubnetTwo:
+                             CIDR: 10.0.1.0/24
+                       
+                         Assets:
+                           Caddy:
+                             DynamoDB: caddy-with-dynamodb
+                             S3:       caddy-with-s3
+                       
+                           Caddyfile:
+                             DynamoDB: Caddyfile-with-dynamodb
+                             S3:       Caddyfile-with-s3
+                       
+                       Resources:
+                         VPC:
+                           Type: 'AWS::EC2::VPC'
+                           Properties:
+                             EnableDnsSupport:   'true'
+                             EnableDnsHostnames: 'true'
+                             CidrBlock: !FindInMap
+                               - Networking
+                               - VPC
+                               - CIDR
+                             Tags:
+                               - Key:        Name
+                                 Value: !Ref UniquePrefix
+                       
+                         ElasticIpOne:
+                           Type: 'AWS::EC2::EIP'
+                           Properties:
+                             Domain: vpc
+                       
+                         InternetGateway:
+                           Type: 'AWS::EC2::InternetGateway'
+                       
+                         GatewayToInternet:
+                           Type: 'AWS::EC2::VPCGatewayAttachment'
+                           DependsOn:
+                             - InternetGateway
+                             - VPC
+                           Properties:
+                             InternetGatewayId: !Ref InternetGateway
+                             VpcId: !Ref             VPC
+                       
+                         PublicRouteTable:
+                           Type:      'AWS::EC2::RouteTable'
+                           DependsOn: VPC
+                           Properties:
+                             VpcId: !Ref VPC
+                       
+                         PublicRoute:
+                           Type: 'AWS::EC2::Route'
+                           DependsOn:
+                             - InternetGateway
+                             - PublicRouteTable
+                           Properties:
+                             RouteTableId: !Ref    PublicRouteTable
+                             DestinationCidrBlock: 0.0.0.0/0
+                             GatewayId: !Ref       InternetGateway
+                       
+                         PublicSubnetOne:
+                           Type:      'AWS::EC2::Subnet'
+                           DependsOn: VPC
+                           Properties:
+                             VpcId: !Ref          VPC
+                             MapPublicIpOnLaunch: true
+                             CidrBlock: !FindInMap
+                               - Networking
+                               - PublicSubnetOne
+                               - CIDR
+                             AvailabilityZone: !Select
+                               - 0
+                               - !GetAZs ''
+                       
+                         PublicSubnetOneRouteTableAssociation:
+                           Type: 'AWS::EC2::SubnetRouteTableAssociation'
+                           DependsOn:
+                             - PublicRouteTable
+                             - PublicSubnetOne
+                           Properties:
+                             SubnetId: !Ref     PublicSubnetOne
+                             RouteTableId: !Ref PublicRouteTable
+                       
+                         PublicSubnetTwo:
+                           Type:      'AWS::EC2::Subnet'
+                           DependsOn: VPC
+                           Properties:
+                             VpcId: !Ref          VPC
+                             MapPublicIpOnLaunch: true
+                             CidrBlock: !FindInMap
+                               - Networking
+                               - PublicSubnetTwo
+                               - CIDR
+                             AvailabilityZone: !Select
+                               - 1
+                               - !GetAZs ''
+                       
+                         PublicSubnetTwoRouteTableAssociation:
+                           Type: 'AWS::EC2::SubnetRouteTableAssociation'
+                           DependsOn:
+                             - PublicRouteTable
+                             - PublicSubnetTwo
+                           Properties:
+                             SubnetId: !Ref     PublicSubnetTwo
+                             RouteTableId: !Ref PublicRouteTable
+                       
+                         # Giving access to all inbound HTTP and HTTPS traffic could be replaced with just access to the `GlobalAccelerator`
+                         # security group inside the VPC, but I don't know how to extract it dynamically
+                       
+                         VPCDefaultSecurityGroupHTTPIngress:
+                           Type:      'AWS::EC2::SecurityGroupIngress'
+                           DependsOn: VPC
+                           Properties:
+                             Description: 'HTTP - IPv4'
+                             GroupId: !GetAtt
+                               - VPC
+                               - DefaultSecurityGroup
+                             IpProtocol:  tcp
+                             FromPort:    '80'
+                             ToPort:      '80'
+                             CidrIp:      0.0.0.0/0
+                       
+                         VPCDefaultSecurityGroupHTTPIngressv6:
+                           Type:      'AWS::EC2::SecurityGroupIngress'
+                           DependsOn: VPC
+                           Properties:
+                             Description: 'HTTP - IPv6'
+                             GroupId: !GetAtt
+                               - VPC
+                               - DefaultSecurityGroup
+                             IpProtocol:  tcp
+                             FromPort:    '80'
+                             ToPort:      '80'
+                             CidrIpv6:    '::/0'
+                       
+                         VPCDefaultSecurityGroupHTTPSIngress:
+                           Type:      'AWS::EC2::SecurityGroupIngress'
+                           DependsOn: VPC
+                           Properties:
+                             Description: 'HTTPS - IPv4'
+                             GroupId: !GetAtt
+                               - VPC
+                               - DefaultSecurityGroup
+                             IpProtocol:  tcp
+                             FromPort:    '443'
+                             ToPort:      '443'
+                             CidrIp:      0.0.0.0/0
+                       
+                         VPCDefaultSecurityGroupHTTPSIngressv6:
+                           Type:      'AWS::EC2::SecurityGroupIngress'
+                           DependsOn: VPC
+                           Properties:
+                             Description: 'HTTPS - IPv6'
+                             GroupId: !GetAtt
+                               - VPC
+                               - DefaultSecurityGroup
+                             IpProtocol:  tcp
+                             FromPort:    '443'
+                             ToPort:      '443'
+                             CidrIpv6:    '::/0'
+                       
+                         VPCDefaultSecurityGroupSSHIngress:
+                           Type:      'AWS::EC2::SecurityGroupIngress'
+                           DependsOn: VPC
+                           Properties:
+                             Description: 'SSH'
+                             GroupId: !GetAtt
+                               - VPC
+                               - DefaultSecurityGroup
+                             IpProtocol:  tcp
+                             FromPort:    '22'
+                             ToPort:      '22'
+                             CidrIp: !Ref SSHWhitelistRange
+                       
+                         KeyPair:
+                           Type: 'AWS::EC2::KeyPair'
+                           Properties:
+                             KeyName: !Sub "${UniquePrefix}-key-pair"
+                       
+                         LaunchTemplate:
+                           Type: 'AWS::EC2::LaunchTemplate'
+                           DependsOn:
+                             - VPC
+                             - KeyPair
+                           Properties:
+                             LaunchTemplateName: !Sub "${UniquePrefix}-launch-template"
+                             LaunchTemplateData:
+                               IamInstanceProfile:
+                                 Name: !Ref EC2InstanceProfile
+                               ImageId: !Ref      LatestAmiId
+                               InstanceType: !Ref InstanceType
+                               KeyName: !Ref      KeyPair
+                               Monitoring:
+                                 Enabled: true
+                               SecurityGroupIds:
+                                 - !GetAtt
+                                   - VPC
+                                   - DefaultSecurityGroup
+                               UserData:
+                                 Fn::Base64: !Sub
+                                   - |+
+                                     #!/bin/bash
+                       
+                                     yum update -y
+                                     yum install -y amazon-cloudwatch-agent
+                       
+                                     # Create the caddy user and group to then run as a service
+                                     groupadd \
+                                       --system \
+                                       caddy
+                       
+                                     useradd \
+                                       --system \
+                                       --gid caddy \
+                                       --create-home \
+                                       --home-dir /var/lib/caddy \
+                                       --shell /usr/sbin/nologin \
+                                       --comment "Caddy web server" \
+                                       caddy
+                       
+                                     # Download relevant version of Caddy from GitHub release
+                                     curl -s https://api.github.com/repos/mitchdav/laravel-custom-domains/releases/latest \
+                                     | grep "browser_download_url" \
+                                     | grep "${Caddy}" \
+                                     | cut -d : -f 2,3 \
+                                     | tr -d \" \
+                                     | wget -qi - -O /usr/bin/caddy
+                       
+                                     # Make Caddy executable
+                                     chmod +x /usr/bin/caddy
+                       
+                                     # Create the Caddy directory and Caddyfile
+                                     mkdir /etc/caddy
+                       
+                                     # Write the config file
+                                     curl -s https://api.github.com/repos/mitchdav/laravel-custom-domains/releases/latest \
+                                     | grep "browser_download_url" \
+                                     | grep "${Caddyfile}" \
+                                     | cut -d : -f 2,3 \
+                                     | tr -d \" \
+                                     | wget -qi - -O /etc/caddy/Caddyfile
+                       
+                                     # Inject variables to overwrite default Caddyfile template with our parameters from CloudFormation
+                                     sed -i 's\INJECT_ASK_URL\${InjectAskUrl}\' /etc/caddy/Caddyfile
+                                     sed -i 's\INJECT_DYNAMODB_REGION\${InjectDynamoDBRegion}\' /etc/caddy/Caddyfile
+                                     sed -i 's\INJECT_DYNAMODB_TABLE\${InjectDynamoDBTable}\' /etc/caddy/Caddyfile
+                                     sed -i 's\INJECT_HEADER_NAME\${InjectHeaderName}\' /etc/caddy/Caddyfile
+                                     sed -i 's\INJECT_NOTIFICATION_EMAIL\${InjectCaddyNotificationEmail}\' /etc/caddy/Caddyfile
+                                     sed -i 's\INJECT_S3_BUCKET\${InjectS3Bucket}\' /etc/caddy/Caddyfile
+                                     sed -i 's\INJECT_S3_HOST\${InjectS3Host}\' /etc/caddy/Caddyfile
+                                     sed -i 's\INJECT_TARGET_URL\${InjectTargetUrl}\' /etc/caddy/Caddyfile
+                       
+                                     # Create the log directory for Caddy
+                                     mkdir /var/log/caddy
+                       
+                                     chown caddy:caddy /etc/caddy/Caddyfile
+                                     chown caddy:caddy /var/log/caddy
+                       
+                                     # Install Caddy as a service
+                                     curl -s https://api.github.com/repos/mitchdav/laravel-custom-domains/releases/latest \
+                                     | grep "browser_download_url" \
+                                     | grep "service" \
+                                     | cut -d : -f 2,3 \
+                                     | tr -d \" \
+                                     | wget -qi - -O /etc/systemd/system/caddy.service
+                       
+                                     # Reload and enable Caddy
+                                     systemctl daemon-reload
+                                     systemctl enable --now caddy
+                                     systemctl status caddy
+                       
+                                     CADDY_RUNNING=$?
+                       
+                                     if [ $CADDY_RUNNING -ne 0 ]; then                       
+                                       # Send the exit code from `systemctl status caddy` as a signal to Cloudformation monitoring
+                                       /opt/aws/bin/cfn-signal --stack ${StackId} --region ${Region} --resource AutoScalingGroup -e $CADDY_RUNNING
+                                     fi
+                       
+                                     # Write the CloudWatch agent config file
+                                     curl -s https://api.github.com/repos/mitchdav/laravel-custom-domains/releases/latest \
+                                     | grep "browser_download_url" \
+                                     | grep "amazon-cloudwatch-agent" \
+                                     | cut -d : -f 2,3 \
+                                     | tr -d \" \
+                                     | wget -qi - -O /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+                       
+                                     sed -i 's\INJECT_REGION\${InjectRegion}\' /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+                                     sed -i 's\INJECT_UNIQUE_PREFIX\${InjectUniquePrefix}\' /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+                       
+                                     /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+                       
+                                     /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a status | grep running
+                       
+                                     # Send the exit code from `/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a status | grep running` as a signal to CloudFormation monitoring
+                                     /opt/aws/bin/cfn-signal --stack ${StackId} --region ${Region} --resource AutoScalingGroup -e $?
+
+                                   - Caddy:
+                                       Fn::FindInMap: [ Assets, Caddy, !Ref StorageModule ]
+                                     Caddyfile:
+                                       Fn::FindInMap: [ Assets, Caddyfile, !Ref StorageModule ]
+                                     Region: !Ref                                     AWS::Region
+                                     StackId: !Ref                                    AWS::StackId
+                       
+                                     InjectAskUrl: !Ref                               AskUrl
+                                     InjectDynamoDBRegion: !Ref                       MasterRegion
+                                     InjectDynamoDBTable: !Ref                        CaddyDynamoDBTable
+                                     InjectHeaderName: !Ref                           HeaderName
+                                     InjectCaddyNotificationEmail: !Ref               CaddyNotificationEmail
+                                     InjectS3Bucket: !Ref                             CaddyS3Bucket
+                                     InjectS3Host: !Sub                               's3.${AWS::Region}.amazonaws.com'
+                                     InjectTargetUrl: !Ref                            TargetUrl
+                       
+                                     InjectRegion: !Ref                               MasterRegion
+                                     InjectUniquePrefix: !Ref                         UniquePrefix
+                       
+                         EndpointGroup:
+                           Type: 'AWS::GlobalAccelerator::EndpointGroup'
+                           Properties:
+                             EndpointGroupRegion: !Ref   'AWS::Region'
+                             HealthCheckIntervalSeconds: 10
+                             HealthCheckPath:            /health
+                             HealthCheckPort:            80
+                             HealthCheckProtocol:        HTTP
+                             ListenerArn: !Ref           GlobalAcceleratorListener
+                             ThresholdCount:             2
+                             TrafficDialPercentage:      100
+                       
+                         AutoScalingEventLambda:
+                           Type:      'AWS::Lambda::Function'
+                           DependsOn: EndpointGroup
+                           Properties:
+                             FunctionName: !Sub "${UniquePrefix}-auto-scaling-event-handler"
+                             Code:
+                               ZipFile: |
+                                        const AWS = require('aws-sdk');
+                                        const globalaccelerator = new AWS.GlobalAccelerator({ region: 'us-west-2' });
+                       
+                                        exports.handler = async function(event) {
+                                          console.log('Invoked with event:', JSON.stringify(event));
+                       
+                                          const message = JSON.parse(event.Records[0].Sns.Message);
+                                          const eventType = message.Event;
+                                          const ec2InstanceId = message.EC2InstanceId;
+                                          const endpointGroup = process.env.EndpointGroup;
+                       
+                                          if(eventType === 'autoscaling:EC2_INSTANCE_LAUNCH') {
+                                            const response = await globalaccelerator
+                                              .addEndpoints({ 
+                                                EndpointConfigurations: [ { ClientIPPreservationEnabled: true, EndpointId: ec2InstanceId, Weight: 128 } ], 
+                                                EndpointGroupArn: endpointGroup 
+                                              })
+                                              .promise();
+                       
+                                            console.log('Response from adding endpoint:', JSON.stringify(response));
+                       
+                                            return response;
+                                          } else if(eventType === 'autoscaling:EC2_INSTANCE_TERMINATE') {
+                                            const response = await globalaccelerator
+                                              .removeEndpoints({ 
+                                                EndpointGroupArn: endpointGroup, 
+                                                EndpointIdentifiers: [ { ClientIPPreservationEnabled: true, EndpointId: ec2InstanceId } ] 
+                                              })
+                                              .promise();
+                       
+                                            console.log('Response from removing endpoint:', JSON.stringify(response));
+                       
+                                            return response;
+                                          } else { 
+                                            console.log('Unknown event type');
+                       
+                                            return null;
+                                          }
+                                        }
+                             Environment:
+                               Variables:
+                                 EndpointGroup: !Ref EndpointGroup
+                             Handler:           index.handler
+                             Role: !Ref         AutoScalingEventLambdaRoleArn
+                             Runtime:           nodejs16.x
+                             Timeout:           30
+                       
+                         NotificationTopic:
+                           Type: 'AWS::SNS::Topic'
+                           DependsOn:
+                             - EndpointGroup
+                           Properties:
+                             TopicName: !Sub "${UniquePrefix}-notifications"
+                             Subscription:
+                               - Endpoint: !Ref AutoScalingNotificationEmail
+                                 Protocol:      email
+                               - Endpoint: !GetAtt
+                                   - AutoScalingEventLambda
+                                   - Arn
+                                 Protocol: lambda
+                       
+                         AutoScalingEventLambdaPermission:
+                           Type: 'AWS::Lambda::Permission'
+                           DependsOn:
+                             - AutoScalingEventLambda
+                             - NotificationTopic
+                           Properties:
+                             FunctionName: !GetAtt
+                               - AutoScalingEventLambda
+                               - Arn
+                             Action:             'lambda:InvokeFunction'
+                             Principal:          sns.amazonaws.com
+                             SourceAccount: !Ref 'AWS::AccountId'
+                             SourceArn: !GetAtt
+                               - NotificationTopic
+                               - TopicArn
+                       
+                         AutoScalingGroup:
+                           Type: 'AWS::AutoScaling::AutoScalingGroup'
+                           DependsOn:
+                             - LaunchTemplate
+                             - GatewayToInternet
+                             - PublicSubnetOne
+                             - PublicSubnetTwo
+                           CreationPolicy:
+                             ResourceSignal:
+                               Count: !Ref MinInstances
+                               Timeout:    PT3M
+                           UpdatePolicy:
+                             AutoScalingRollingUpdate:
+                               MinInstancesInService: '1'
+                               MaxBatchSize:          '1'
+                               PauseTime:             PT3M
+                               WaitOnResourceSignals: true
+                               SuspendProcesses:
+                                 - HealthCheck
+                                 - ReplaceUnhealthy
+                                 - AZRebalance
+                                 - AlarmNotification
+                                 - ScheduledActions
+                           Properties:
+                             AutoScalingGroupName: !Sub "${UniquePrefix}-auto-scaling-group"
+                             LaunchTemplate:
+                               LaunchTemplateId: !Ref LaunchTemplate
+                               Version: !GetAtt
+                                 - LaunchTemplate
+                                 - LatestVersionNumber
+                             MaxSize: !Ref              MaxInstances
+                             MinSize: !Ref              MinInstances
+                             NotificationConfigurations:
+                               - TopicARN: !Ref NotificationTopic
+                                 NotificationTypes:
+                                   - 'autoscaling:EC2_INSTANCE_LAUNCH'
+                                   - 'autoscaling:EC2_INSTANCE_LAUNCH_ERROR'
+                                   - 'autoscaling:EC2_INSTANCE_TERMINATE'
+                                   - 'autoscaling:EC2_INSTANCE_TERMINATE_ERROR'
+                             VPCZoneIdentifier:
+                               - !Ref PublicSubnetOne
+                               - !Ref PublicSubnetTwo
+                       
+                         AutoScalingGroupScaleOutPolicy:
+                           Type:      'AWS::AutoScaling::ScalingPolicy'
+                           Properties:
+                             AdjustmentType:            ChangeInCapacity
+                             AutoScalingGroupName: !Ref AutoScalingGroup
+                             Cooldown:                  '120'
+                             ScalingAdjustment:         '1'
+                       
+                         AutoScalingGroupScaleOutAlarm:
+                           Type:      'AWS::CloudWatch::Alarm'
+                           Properties:
+                             EvaluationPeriods:  '1'
+                             Statistic:          Average
+                             Threshold:          '70'
+                             AlarmDescription:   Scale up alarm when CPU utilization > 70% for 1 minute
+                             Period:             '60'
+                             AlarmActions:
+                               - !Ref AutoScalingGroupScaleOutPolicy
+                             Namespace:          AWS/EC2
+                             Dimensions:
+                               - Name:       AutoScalingGroupName
+                                 Value: !Ref AutoScalingGroup
+                             ComparisonOperator: GreaterThanThreshold
+                             MetricName:         CPUUtilization
+                       
+                         AutoScalingGroupScaleInPolicy:
+                           Type:      'AWS::AutoScaling::ScalingPolicy'
+                           Properties:
+                             AdjustmentType:            ChangeInCapacity
+                             AutoScalingGroupName: !Ref AutoScalingGroup
+                             Cooldown:                  '120'
+                             ScalingAdjustment:         '-1'
+                       
+                         AutoScalingGroupScaleInAlarm:
+                           Type:      'AWS::CloudWatch::Alarm'
+                           Properties:
+                             EvaluationPeriods:  '1'
+                             Statistic:          Average
+                             Threshold:          '45'
+                             AlarmDescription:   Scale down alarm when CPU utilization <= 45% for 5 minutes
+                             Period:             '300'
+                             AlarmActions:
+                               - !Ref AutoScalingGroupScaleInPolicy
+                             Namespace:          AWS/EC2
+                             Dimensions:
+                               - Name:       AutoScalingGroupName
+                                 Value: !Ref AutoScalingGroup
+                             ComparisonOperator: LessThanOrEqualToThreshold
+                             MetricName:         CPUUtilization

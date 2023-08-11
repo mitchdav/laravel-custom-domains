@@ -1,5 +1,7 @@
 {
-  "region": "{{INJECT_REGION}}",
+  "agent": {
+    "region": "{{INJECT_REGION}}"
+  },
   "logs":  {
     "logs_collected": {
       "files": {
